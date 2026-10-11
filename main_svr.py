@@ -1,205 +1,100 @@
 # -*- coding: utf-8 -*-
-"""
-Created on Mon Jul 12 19:06:38 2021
+"""WOA-SVR: optimise SVR hyperparameters with the Whale Optimization Algorithm.
 
-@author: MUZANNI
+Each whale is a 5-D vector ``[cLR, C, epsilon, lamda, sigma]``. Fitness is the
+training MSE of the SVR trained with those hyperparameters (see svr.py).
+
+Run:  python main_svr.py [--agents 10] [--iterations 10] [--seed 42]
 """
 
-import pandas as pd
-import numpy as np
-import math
+import argparse
+
 import matplotlib.pyplot as plt
-from random import random
-import training_svr
+import numpy as np
+
 import SVR_Model
+import svr
+import woa
 
-NUMBER_OF_SOLUTION = 10
-NUMBER_OF_ITERATIONS = 1
-THRESHOLD_UPDATE_PROBABILITY = 0.5
-b = 2
-
-LOWER_BOUND_cLR = 0.01
-UPPER_BOUND_cLR = 0.1
-LOWER_BOUND_C = 10
-UPPER_BOUND_C = 200
-LOWER_BOUND_EPSILON = 0.0001
-UPPER_BOUND_EPSILON = 0.1
-LOWER_BOUND_LAMBDA = 0.05
-UPPER_BOUND_LAMBDA = 0.5
-LOWER_BOUND_SIGMA = 0.1
-UPPER_BOUND_SIGMA = 0.5
+# Search-space bounds for the five SVR hyperparameters.
+BOUNDS = [
+    (0.01, 0.1),      # cLR      (learning rate)
+    (10.0, 200.0),    # C_value  (regularisation)
+    (0.0001, 0.1),    # epsilon  (insensitive tube)
+    (0.05, 0.5),      # lamda    (Hessian regularisation)
+    (0.1, 0.5),       # sigma    (RBF kernel width)
+]
+PARAM_NAMES = ["cLR", "C_value", "epsilon", "lamda", "sigma"]
 
 
-fileName = 'data/dataCovid.csv'
-rawFile = pd.read_csv(fileName, header=None, delimiter=";")
+def fitness_factory(data_path="data/dataCovid.csv", proportion=0.7):
+    """Build a fitness function closing over the dataset.
 
-inputs = np.array(rawFile[rawFile.columns[:-1]])
-outputs = np.array(rawFile[rawFile.columns[-1:]])
+    Trains an SVR for each candidate hyperparameter vector and returns the
+    training MSE. Note: optimising on training error risks overfitting; the
+    held-out test MSE is reported separately for reference.
+    """
 
-# Get Fitness of list of solution / agent
-# def get_fitness(solutions):    
-#     outputs_predict = np.dot(inputs, solutions)
-#     errors = np.array([(i - j) ** 2 for i, j in zip(outputs, outputs_predict)]).sum() / len(outputs)
-#     return {
-#         'errors': errors,
-#         'solutions': solutions
-#         }
+    def fitness(solution):
+        model = SVR_Model.SVR_Model()
+        for name, value in zip(PARAM_NAMES, solution):
+            setattr(model, name, float(value))
+        trained = svr.exec_svr_woa(
+            model=model, data_path=data_path, proportion=proportion
+        )
+        return trained.errors
 
-def get_fitness(solutions):
-    prediction_model = SVR_Model.SVR_Model()
-    prediction_model.cLR = solutions[0]
-    prediction_model.C_value = solutions[1]
-    prediction_model.epsilon = solutions[2]
-    prediction_model.lamda = solutions[3]
-    prediction_model.sigma = solutions[4]
-    
-    trained_model = training_svr.exec_svr_woa(model=prediction_model)
-    
-    return trained_model
-
-# def get_random(multiplier = 1):
-#     return random()*multiplier
-
-def get_random(parameter = 'cLR'):
-    switcher = {
-        'cLR': np.random.uniform(LOWER_BOUND_cLR, UPPER_BOUND_cLR),
-        'C_Value': np.random.uniform(LOWER_BOUND_C, UPPER_BOUND_C),
-        'epsilon': np.random.uniform(LOWER_BOUND_EPSILON, UPPER_BOUND_EPSILON),
-        'lamda': np.random.uniform(LOWER_BOUND_LAMBDA, UPPER_BOUND_LAMBDA),
-        'sigma': np.random.uniform(LOWER_BOUND_SIGMA, UPPER_BOUND_SIGMA),
-    }
-    
-    return switcher.get(parameter, np.random.uniform(LOWER_BOUND_cLR, UPPER_BOUND_cLR))
-
-def get_best_solution(solutions):
-    fitness_list = [get_fitness(solutions[:,idx]) for idx in range(len(solutions[0]))]
-    sorted_fitness_list = sorted(fitness_list, key=lambda fitness: fitness.errors)
-    return sorted_fitness_list[0]
-
-def validate_range_solution(current_solution):
-    validated_solution = []
-    if (current_solution[0] < LOWER_BOUND_cLR):
-        validated_solution.append(LOWER_BOUND_cLR)
-    elif (current_solution[0] > UPPER_BOUND_cLR):
-        validated_solution.append(UPPER_BOUND_cLR)
-    else:
-        validated_solution.append(current_solution[0])
-    
-    if (current_solution[1] < LOWER_BOUND_C):
-        validated_solution.append(LOWER_BOUND_C)
-    elif (current_solution[1] > UPPER_BOUND_C):
-        validated_solution.append(UPPER_BOUND_C)
-    else:
-        validated_solution.append(current_solution[1])
-    
-    if (current_solution[2] < LOWER_BOUND_EPSILON):
-        validated_solution.append(LOWER_BOUND_EPSILON)
-    elif (current_solution[2] > UPPER_BOUND_EPSILON):
-        validated_solution.append(UPPER_BOUND_EPSILON)
-    else:
-        validated_solution.append(current_solution[2])
-    
-    if (current_solution[3] < LOWER_BOUND_LAMBDA):
-        validated_solution.append(LOWER_BOUND_LAMBDA)
-    elif (current_solution[3] > UPPER_BOUND_EPSILON):
-        validated_solution.append(UPPER_BOUND_EPSILON)
-    else:
-        validated_solution.append(current_solution[3])
-    
-    if (current_solution[4] < LOWER_BOUND_SIGMA):
-        validated_solution.append(LOWER_BOUND_SIGMA)
-    elif (current_solution[4] > UPPER_BOUND_SIGMA):
-        validated_solution.append(UPPER_BOUND_SIGMA)
-    else:
-        validated_solution.append(current_solution[4])
-        
-    return validated_solution
-
-model_svr = SVR_Model.SVR_Model()
-model_svr.cLR = 0.05
-model_svr.C_value = 100.0
-model_svr.epsilon = 0.0005
-model_svr.lamda = 0.1
-model_svr.sigma = 0.3
-
-# print(training_svr.exec_svr_woa(model=model_svr))
-
-# Generate Random Solution
-# row 0 -> cLR
-# row 1 -> C_Value
-# row 2 -> epsilon
-# row 3 -> lamda
-# row 4 -> sigma
-
-solutions = np.array([
-    [get_random('cLR'), 
-     get_random('C_Value'),
-     get_random('epsilon'),
-     get_random('lamda'),
-     get_random('sigma')] for i in range(NUMBER_OF_SOLUTION)]).transpose()
-
-# # 
-# fitness = get_fitness(solutions)
-
-# Get best solution from all of solutions
-best_solution = get_best_solution(solutions)
-
-init_solution = solutions[:]
-for idx_iter, current_iter in enumerate(range(NUMBER_OF_ITERATIONS)):
-    print("ITERASI KE-", idx_iter)
-    updated_solution_list = []
-    for curr_solution in [solutions[:, idx] for idx in range(len(solutions[0]))]:
-        # print(solution)
-        update_probability = random()
-        print(update_probability)
-        updated_solution = []
-        a = ((current_iter+1) / NUMBER_OF_ITERATIONS) * 2
-        if (update_probability < THRESHOLD_UPDATE_PROBABILITY):            
-            r = random()
-            A = (2*a*r) - a
-            C = 2*r
-            if (abs(A) < 1):                
-                print('ENCIRCLING')
-                D = abs((C*best_solution.solutions) - curr_solution)
-                updated_solution = best_solution.solutions - (A*D)
-                
-                
-            else:
-                print('SEARCHING')
-                random_solution = solutions[:, int(random()*len(solutions))]
-                D = abs((C*random_solution) - curr_solution)
-                updated_solution = random_solution - (A*D)
-                
-                            
-        else:
-            print('EKSPLOITASI')
-            D = abs(best_solution.solutions - curr_solution)
-            l = np.random.uniform(-1,1)
-            updated_solution = (D * (math.e ** (b*l)) * np.cos(2*math.pi*l)) + best_solution.solutions
-            
-        print(curr_solution)
-        updated_solution = validate_range_solution(updated_solution)
-        print(updated_solution)        
-        updated_fitness = get_fitness(updated_solution)
-        print('-error')
-        print(best_solution.errors)
-        print(updated_fitness.errors)
-        
-        # UPDATE BEST SOLUTION
-        if (updated_fitness.errors < best_solution.errors):
-            best_solution = updated_fitness
-        
-        updated_solution_list.append(updated_solution)
-        
-    # UPDATE ALL SOLUTION
-    solutions = np.array(updated_solution_list[:]).T
+    return fitness
 
 
-plt.plot([i for i in range(len(best_solution.training_data))], best_solution.training_data, color='red', lw=1, label="Real Training Data")
-plt.plot([i for i in range(len(best_solution.validation_result))], best_solution.validation_result, color='blue', lw=1, label="Prediction (Validation) Data")
-plt.title('SVR-WOA', size=20)
-plt.xlabel('Hari ke-', size=14)
-plt.ylabel('Jumlah Kasus', size=14)
-plt.legend()                 
-plt.show()
-    
+def main(agents=10, iterations=10, seed=42,
+         data_path="data/dataCovid.csv", proportion=0.7):
+    fitness = fitness_factory(data_path=data_path, proportion=proportion)
+
+    best, best_fitness, _history = woa.optimize(
+        fitness,
+        bounds=BOUNDS,
+        n_agents=agents,
+        n_iterations=iterations,
+        seed=seed,
+        verbose=True,
+    )
+    print("Best hyperparameters:")
+    for name, value in zip(PARAM_NAMES, best):
+        print(f"  {name:8s} = {value:.6f}")
+    print(f"Best training MSE: {best_fitness:.6f}")
+
+    # Final evaluation with the best hyperparameters (incl. honest test MSE)
+    model = SVR_Model.SVR_Model()
+    for name, value in zip(PARAM_NAMES, best):
+        setattr(model, name, float(value))
+    trained = svr.exec_svr_woa(
+        model=model, data_path=data_path, proportion=proportion,
+        is_print_log=False,
+    )
+    print(f"Held-out test MSE: {trained.test_mse:.6f}")
+
+    plt.plot(
+        range(len(trained.training_data)), trained.training_data,
+        color="red", lw=1, label="Data latih (aktual)",
+    )
+    plt.plot(
+        range(len(trained.training_prediction)), trained.training_prediction,
+        color="blue", lw=1, label="Prediksi (training)",
+    )
+    plt.title("SVR-WOA", size=20)
+    plt.xlabel("Hari ke-", size=14)
+    plt.ylabel("Jumlah Kasus", size=14)
+    plt.legend()
+    plt.show()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="WOA-SVR hyperparameter search")
+    parser.add_argument("--agents", type=int, default=10)
+    parser.add_argument("--iterations", type=int, default=10)
+    parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--data", type=str, default="data/dataCovid.csv")
+    args = parser.parse_args()
+    main(agents=args.agents, iterations=args.iterations, seed=args.seed,
+         data_path=args.data)
